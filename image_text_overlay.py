@@ -34,7 +34,7 @@ class ImageTextOverlay:
         return {
             "required": {
                 "images": ("IMAGE",),
-                "text": ("STRING",{"multiline": True, "default": "Hello"}),
+                "texts": ("STRING",{"multiline": True, "default": "Hello"}),
                 "font_size": ("INT", {"default": 16, "min": 1, "max": 256, "step": 1}),
                 "x": ("INT", {"default": 0}),
                 "y": ("INT", {"default": 0}),
@@ -51,12 +51,14 @@ class ImageTextOverlay:
     FUNCTION = "draw_text_on_image"
     CATEGORY = "image/text"
         
-    def draw_text_on_image(self, images, text, font_size, x, y, font, alignment, r, g, b):
+    def draw_text_on_image(self, images, texts, font_size, x, y, font, alignment, r, g, b):
         # convert images to numpy
         #return images
         frames: List[Image.Image] = []
         outframes=[]
+        ind=0
         for image in images:
+            text=texts[ind]
             image = 255.0 * image.cpu().numpy()
             image = Image.fromarray(np.clip(image, 0, 255).astype(np.uint8))
             frames.append(image)
@@ -99,6 +101,7 @@ class ImageTextOverlay:
             
             #return (image_tensor_out,)
             outframes.append(image_tensor_out)
+            ind=ind+1
     
         return torch.cat(tuple(outframes), dim=0).unsqueeze(0)
 
