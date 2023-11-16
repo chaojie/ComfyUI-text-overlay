@@ -35,6 +35,7 @@ class ImageTextOverlay:
             "required": {
                 "images": ("IMAGE",),
                 "texts": ("STRING",{"multiline": True, "default": "Hello"}),
+                "watermark": ("STRING",{"multiline": True, "default": "Hello"}),
                 "font_size": ("INT", {"default": 16, "min": 1, "max": 256, "step": 1}),
                 "x": ("INT", {"default": 0}),
                 "y": ("INT", {"default": 0}),
@@ -51,7 +52,7 @@ class ImageTextOverlay:
     FUNCTION = "draw_text_on_image"
     CATEGORY = "image/text"
         
-    def draw_text_on_image(self, images, texts, font_size, x, y, font, alignment, r, g, b):
+    def draw_text_on_image(self, images, texts, watermark, font_size, x, y, font, alignment, r, g, b):
         # convert images to numpy
         #return images
         frames: List[Image.Image] = []
@@ -76,6 +77,7 @@ class ImageTextOverlay:
     
             # Load font
             loaded_font = ImageFont.truetype(font, font_size)
+            loaded_font1 = ImageFont.truetype(font, 16)
     
             # Prepare to draw on image
             draw = ImageDraw.Draw(image)
@@ -93,6 +95,7 @@ class ImageTextOverlay:
     
             # Draw text on the image
             draw.text((x, y), text, fill=color_rgb, font=loaded_font)
+            draw.text((25, 25), watermark, fill=(255, 255, 255), font=loaded_font1)
     
     
             # Convert back to Tensor if needed
