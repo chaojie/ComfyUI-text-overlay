@@ -226,7 +226,7 @@ class Image2AudioVideo:
                     soundEx=1
             itxt=itxt+1
         #print(1000*len(texts)/fps)
-        soundbg=soundbg[:1000*len(texts)/fps]
+        soundbg=soundbg[:1000*len(images)/fps]
         soundbg.export(sound_path, format="mp3")
         print(sound_path)
         cmd = [
