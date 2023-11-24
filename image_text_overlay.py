@@ -2,6 +2,13 @@ from PIL import Image, ImageDraw, ImageFont
 import torch
 import numpy as np
 from typing import List, Optional, Union
+from pydub import AudioSegment
+import requests
+import folder_paths
+import os
+import subprocess
+import time
+from datetime import datetime
     
 # region TENSOR Utilities
 def tensor2pil(image: torch.Tensor) -> List[Image.Image]:
@@ -45,25 +52,42 @@ class ImageTextOverlay:
                 "r": ("INT", {"default": 0}),
                 "g": ("INT", {"default": 0}),
                 "b": ("INT", {"default": 0}),
+                "fps": ("INT", {"default": 8}),
             }
         }
 
-    RETURN_TYPES = ("IMAGE",)
+    RETURN_TYPES = ("STRING",)
     FUNCTION = "draw_text_on_image"
     CATEGORY = "image/text"
         
-    def draw_text_on_image(self, images, texts, watermark, font_size, x, y, font, alignment, r, g, b):
+    def draw_text_on_image(self, images, texts, watermark, font_size, x, y, font, alignment, r, g, b,fps):
+        output_dir = folder_paths.get_output_directory()
+        (
+            full_output_folder,
+            filename,
+            _,
+            subfolder,
+            _,
+        ) = folder_paths.get_save_image_path('lc_ad_', output_dir)
+        counter=1
+        file = f"{filename}_{counter:05}.mp4"
+        file_path = os.path.join(full_output_folder, file)
+        
         # convert images to numpy
         #return images
         frames: List[Image.Image] = []
         outframes=[]
         ind=0
+        #tmpdir=folder_paths.get_temp_directory()
+        tmpdir=os.path.join(full_output_folder,filename)
+        os.makedirs(tmpdir, exist_ok=True)
+        
         for image in images:
             text=texts[ind]
             image = 255.0 * image.cpu().numpy()
             image = Image.fromarray(np.clip(image, 0, 255).astype(np.uint8))
             frames.append(image)
-            print(len(frames))
+            #print(len(frames))
             # Convert tensor to numpy array and then to PIL Image
             #image_tensor = image
             #image_np = image_tensor.cpu().numpy()  # Change from CxHxW to HxWxC for Pillow
@@ -85,8 +109,8 @@ class ImageTextOverlay:
             # Adjust x coordinate based on alignment
             w=image.width
             h=image.height
-            print(w)
-            print(h)
+            #print(w)
+            #print(h)
             text_width, text_height = draw.textsize(text, font=loaded_font)
             if alignment == "center":
                 x = w/2-text_width/2
@@ -97,18 +121,141 @@ class ImageTextOverlay:
             draw.text((x, y), text, fill=color_rgb, font=loaded_font)
             draw.text((25, 25), watermark, fill=(255, 255, 255), font=loaded_font1)
     
-    
-            # Convert back to Tensor if needed
-            image_tensor_out = torch.tensor(np.array(image).astype(np.float32) / 255.0)  # Convert back to CxHxW
-            image_tensor_out = torch.unsqueeze(image_tensor_out, 0)
-            
-            #return (image_tensor_out,)
-            outframes.append(image_tensor_out)
+            tmpfile=os.path.join(tmpdir, f'{ind}.png')
+            image.save(tmpfile)
             ind=ind+1
+            
+        cmd = [
+            'ffmpeg',
+            '-y',  # Overwrite output file if it exists
+            '-framerate', str(fps),  # Set the framerate for the input files
+            #'-pattern_type', 'glob',  # Enable pattern matching for filenames
+            '-i', f'{tmpdir}/%d.png',  # Input files pattern
+            '-c:v', 'libx264',  # Set the codec for video
+            '-pix_fmt', 'yuv420p',  # Set the pixel format
+            '-crf', '17',  # Set the constant rate factor for quality
+            file_path  # Output file
+        ]
     
-        return torch.cat(tuple(outframes), dim=0).unsqueeze(0)
+        # Run the ffmpeg command
+        subprocess.run(cmd)
+        diff_time=0
+          
+        while diff_time<10:
+              time.sleep(10)
+              output_video_path_mtime=int(os.path.getmtime(file_path))
+              now_time=int(datetime.now().timestamp())
+              diff_time=now_time-output_video_path_mtime
+        time.sleep(2)
+        
+        return (file_path,)
 
+
+class Image2AudioVideo:
+    def __init__(self, device="cpu"):
+        self.device = device
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "video_path": ("STRING", {"default": ""}),
+                "texts": ("STRING",{"multiline": True, "default": "Hello"}),
+                "baidu_akey": ("STRING", {"default": ""}),
+                "baidu_skey": ("STRING", {"default": ""}),
+                "bgaudio": ("STRING", {"default": "bg.m4a"}),
+                "fps": ("INT", {"default": 8}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "image_to_audiovideo"
+    CATEGORY = "image/text"
+        
+    def image_to_audiovideo(self, video_path, texts, baidu_akey,baidu_skey,bgaudio,fps):
+        output_dir = folder_paths.get_output_directory()
+        (
+            full_output_folder,
+            filename,
+            _,
+            subfolder,
+            _,
+        ) = folder_paths.get_save_image_path('lc_ad_', output_dir)
+        counter=1
+        file = f"{filename}_{counter:05}.mp3"
+        sound_path = os.path.join(full_output_folder, file)
+        output_video_path = os.path.join(full_output_folder, f"{filename}.mp4")
+        
+        #tmpdir=os.path.join(full_output_folder,filename)
+        #os.makedirs(tmpdir, exist_ok=True)
+        
+        soundbg = AudioSegment.from_file(bgaudio)
+        soundbg=soundbg*10
+        
+        url = "https://aip.baidubce.com/oauth/2.0/token"
+        params = {"grant_type": "client_credentials", "client_id": baidu_akey, "client_secret": baidu_skey}
+        access_token=str(requests.post(url, params=params).json().get("access_token"))
+        
+        pretext=""
+        itxt=0
+        for txt in texts:
+            if pretext!=txt:
+                payload=urlencode({"tex":txt})+'&tok='+ access_token +'&cuid=lGt9yI9bVNxg8XpAIqLK5mXSUJ4zEHDB&ctp=1&lan=zh&spd=5&pit=5&vol=5&per=5003&aue=3'
+                headers = {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Accept': '*/*'
+                }
+                soundEx=1
+                while soundEx==1:
+                    try:
+                        resp = requests.request("POST", url, headers=headers, data=payload)
+                        soundFile=f'output/lc_ad_{folder}_{i}.mp3'
+                        with open(soundFile,'wb') as f:
+                            f.write(resp.content)
+                        soundcaption = AudioSegment.from_file(soundFile)
+                    
+                        soundbg=soundbg.overlay(soundcaption, position=1000*(i*3/fps+1))
+                        soundEx=0
+                    except:
+                        soundEx=1
+            i=i+1
+        soundbg=soundbg[:1000*len(texts)/fps]
+        soundbg.export(sound_path, format="mp3")
+        cmd = [
+              'ffmpeg',
+              '-y',  # Overwrite output file if it exists
+              '-i', video_path,  # Input files pattern
+              '-i', sound_path,  # Input files pattern
+              #'-filter_complex', "[v][a]concat=n=1:v=1:a=1",  # Input files pattern
+              '-c:v', 'libx264',  # Set the codec for video
+              '-c:a', 'aac',  # Set the codec for video
+              '-movflags', '+faststart',  # Set the pixel format
+              output_video_path  # Output file
+          ]
+  
+          # Run the ffmpeg command
+        subprocess.run(cmd)
+        diff_time=0
+          
+        while diff_time<10:
+              time.sleep(10)
+              output_video_path_mtime=int(os.path.getmtime(output_video_path))
+              now_time=int(datetime.now().timestamp())
+              diff_time=now_time-output_video_path_mtime
+        time.sleep(2)
+        '''
+        previews = [
+            {
+                "filename": file,
+                "subfolder": subfolder,
+                "type": "output",
+                "format": 'video/mp4',
+            }
+        ]
+        '''
+        return (output_video_path,)
 
 NODE_CLASS_MAPPINGS = {
     "Image Text Overlay": ImageTextOverlay,
+    "Image Audio Video": Image2AudioVideo,
 }
