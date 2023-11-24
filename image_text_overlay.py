@@ -10,7 +10,8 @@ import subprocess
 import time
 from datetime import datetime
 from urllib.parse import urlencode
-    
+import shutil
+
 # region TENSOR Utilities
 def tensor2pil(image: torch.Tensor) -> List[Image.Image]:
     batch_count = image.size(0) if len(image.shape) > 3 else 1
@@ -155,12 +156,14 @@ class Image2AudioVideo:
         output_video_path = os.path.join(full_output_folder, f"{filename}.mp4")
 
         tmpdir=os.path.join(full_output_folder,filename)
+        #os.rmdir(tmpdir)
+        shutil.rmtree(tmpdir, ignore_errors=True)
         os.makedirs(tmpdir, exist_ok=True)
         ind=0
         for image in images:
             image = 255.0 * image.cpu().numpy()
             image = Image.fromarray(np.clip(image, 0, 255).astype(np.uint8))
-            tmpfile=os.path.join(tmpdir, f'{ind}.png')
+            tmpfile=os.path.join(tmpdir, f'{ind:05}.png')
             image.save(tmpfile)
             ind=ind+1
             
@@ -169,7 +172,7 @@ class Image2AudioVideo:
             '-y',  # Overwrite output file if it exists
             '-framerate', str(fps),  # Set the framerate for the input files
             #'-pattern_type', 'glob',  # Enable pattern matching for filenames
-            '-i', f'{tmpdir}/%d.png',  # Input files pattern
+            '-i', f'{tmpdir}/%5d.png',  # Input files pattern
             '-c:v', 'libx264',  # Set the codec for video
             '-pix_fmt', 'yuv420p',  # Set the pixel format
             '-crf', '17',  # Set the constant rate factor for quality
