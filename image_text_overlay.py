@@ -1,4 +1,4 @@
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 import torch
 import numpy as np
 from typing import List, Optional, Union
@@ -12,6 +12,10 @@ from datetime import datetime
 from urllib.parse import urlencode
 import shutil
 import re
+import json
+import base64
+from io import BytesIO
+import urllib.request
 
 # region TENSOR Utilities
 def tensor2pil(image: torch.Tensor) -> List[Image.Image]:
@@ -43,6 +47,7 @@ class PrepareStringForSchedule:
         return {
             "required": {
                 "texts": ("STRING",{"multiline": True, "default": "Hello"}),
+                "framecal": ("INT",{"default": 1}),
             }
         }
     
@@ -51,17 +56,72 @@ class PrepareStringForSchedule:
     FUNCTION = "prepare_string_for_schedule"
     CATEGORY = "image/text"
     
-    def prepare_string_for_schedule(self, texts):
+    def prepare_string_for_schedule(self, texts, framecal=1):
         ret=''
         ind=0
         for txt in texts:
-            txt=txt.replace('"','')
+            frameind=ind*framecal[0]
+            txt=txt.replace('"','').replace('(','').replace(')','').replace('\\','')
             if len(txt.split(','))>30:
                 txt=','.join(txt.split(',')[:30])
-            ret=ret+f'"{ind}":"{txt}", '
+            ret=ret+f'"{frameind}":"{txt}", ' 
             ind=ind+1
         return (ret,)
+       
+class StringJoin:
+    #def __init__(self, device="cpu"):
+    #    self.device = device
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "a": ("INT",{"default": 0}),
+            }
+        }
     
+    INPUT_IS_LIST = True
+    RETURN_TYPES = ("STRING", )
+    FUNCTION = "string_join"
+    CATEGORY = "image/text"
+    
+    def string_join(self, a):
+        ret= ','.join([str(x) for x in a])
+        return (ret,)
+
+       
+class DownloadVideo:
+    #def __init__(self, device="cpu"):
+    #    self.device = device
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "url": ("STRING",{"default": ""}),
+                "videopath": ("STRING",{"default": ""}),
+            }
+        }
+    
+    RETURN_TYPES = ("STRING", )
+    FUNCTION = "download_video"
+    CATEGORY = "image/text"
+    
+    def download_video(self, url, videopath):
+        print(url)
+        r = urllib.request.Request(url)
+        u = urllib.request.urlopen(r)
+        start = time.time()
+        with open(videopath, 'wb') as f:
+            while True:
+                tmp = u.read(1024)
+                if not tmp:
+                    break
+                f.write(tmp)
+        end = time.time()
+        print(f'Finish in ： {end - start}')
+        return (videopath,)
+
 class GPTTextSchedule:
     #def __init__(self, device="cpu"):
     #    self.device = device
@@ -137,6 +197,72 @@ class GPTTextSchedule:
             finalmaskprompts=finalmaskprompts+f'"{i*framecal*framelen}": "writing, {moveprompts[i]}",'
             
         return (finalprompts,finalcaptions,finalmaskprompts,len(prompts),frame1prompts,)
+        
+class GPTTextTranslate:
+    #def __init__(self, device="cpu"):
+    #    self.device = device
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "texts": ("STRING",{"multiline": True, "default": "Hello"})
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "gpt_text_translate"
+    CATEGORY = "image/text"
+    
+    def gpt_text_translate(self, texts):
+        prompts=[]
+        captions=[]
+        plist=re.split('\.|。|\n|，|,|\?|？|；|！',texts)
+        pitem=texts
+        #for pitem in plist:
+        pitem=pitem.strip()
+        if pitem!='' and len(pitem)>=2:
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + os.getenv('OPENAI_API_KEY', 'sk-wJrbjKZkhDHMRe3T5a7b212eEbD3484b9d720059BeC6C2Fd'),
+            }
+
+            json_data = {
+                'model': 'gpt-4',
+                'messages': [
+                    {
+                        'role': 'system',
+                        'content': '从现在开始你是一个人工智能绘画提示词生成器。根据我的中文描述生成英文标签提示词，以逗号分隔。',
+                    },
+                    {
+                        'role': 'user',
+                        'content': pitem,
+                    },
+                ],
+            }
+            
+            gpttimes=0
+            while gpttimes>=0 and gpttimes<10:
+                try:
+                    response = requests.post('https://gptapi.us/v1/chat/completions', headers=headers, json=json_data)
+                    pitemgpt=response.json()['choices'][0]['message']['content']
+                    pitemgpt=pitemgpt.replace('"','')
+                    print(pitemgpt)
+                    if len(pitemgpt.split(' '))>30:
+                        pitemgpt=' '.join(pitemgpt.split(' ')[:30])
+                    prompts.insert(len(prompts),pitemgpt.strip())
+                    captions.insert(len(captions),pitem.strip())
+                    gpttimes=-1
+                except:
+                    gpttimes=gpttimes+1
+            if gpttimes==10:
+                return (pitem,)
+        
+        prompt=f'{pitem}, masterpiece, best quality'
+        if len(prompts)>0:
+          prompt=f'{prompts[0]}, masterpiece, best quality'
+        print(prompt)
+        return (prompt,)
     
 class ImageTextOverlay:
     #def __init__(self, device="cpu"):
@@ -222,7 +348,57 @@ class ImageTextOverlay:
     
         return torch.cat(tuple(outframes), dim=0).unsqueeze(0)
 
+'''
+class LoadImagesFromJson:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "imgsjson": ("STRING",{"multiline": False, "default": "[]"}),
+            },
+            "optional": {
+                "image_load_cap": ("INT", {"default": 0, "min": 0, "step": 1}),
+                "start_index": ("INT", {"default": 0, "min": 0, "step": 1}),
+            }
+        }
+        
+    RETURN_TYPES = ("IMAGE", "MASK")
+    OUTPUT_IS_LIST = (True, True)
+    
+    FUNCTION = "load_images_from_json"
+    CATEGORY = "image/text"
 
+    def load_images_from_json(self, imgsjson, image_load_cap, start_index):
+        print(f'{imgsjson}')
+        imgs=json.loads(imgsjson)
+        images = []
+        masks = []
+        
+        limit_images = False
+        if image_load_cap > 0:
+            limit_images = True
+        image_count = 0
+
+        for img in imgs:
+            image_data = base64.b64decode(img.split(",")[1])
+            i = Image.open(BytesIO(image_data))
+            #i = ImageOps.exif_transpose(i)
+            image = i.convert("RGB")
+            image = np.array(image).astype(np.float32) / 255.0
+            image = torch.from_numpy(image)[None,]
+            if 'A' in i.getbands():
+                mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
+                mask = 1. - torch.from_numpy(mask)
+            else:
+                mask = torch.zeros((64, 64), dtype=torch.float32, device="cpu")
+
+            images.append(image)
+            masks.append(mask)
+            image_count += 1
+            
+        return images, masks
+'''       
+            
 class Image2AudioVideo:
     #def __init__(self, device="cpu"):
     #    self.device = device
@@ -372,9 +548,14 @@ class Image2AudioVideo:
         '''
         return (output_video_path,)
 
+
 NODE_CLASS_MAPPINGS = {
+    "String Join": StringJoin,
+    "Download Video": DownloadVideo,
     "Image Text Overlay": ImageTextOverlay,
     "Image Audio Video": Image2AudioVideo,
     "GPT Text Schedule": GPTTextSchedule,
     "Prepare String For Schedule": PrepareStringForSchedule,
+    "GPTTextTranslate": GPTTextTranslate#,
+#    "Load Images From Json": LoadImagesFromJson
 }
